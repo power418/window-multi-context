@@ -140,6 +140,14 @@ public:
         glXSwapBuffers(m_display, m_window);
     }
 
+    void resize(int w, int h)
+    {
+        if (m_context && m_display && m_window) {
+            glXMakeCurrent(m_display, m_window, m_context);
+            glViewport(0, 0, w, h);
+        }
+    }
+
     GLuint program() const { return m_program; }
 
 private:

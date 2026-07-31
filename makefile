@@ -1,5 +1,5 @@
 CC := clang++
-SRC := main.cpp
+SRC := main.cpp Terminal.cpp AnsiParser.cpp TerminalState.cpp PTY.cpp Grid.cpp Color.cpp UTF8Decoder.cpp
 EXEC := main.out
 
 LIBS := -lX11 -lGL -lXft -lXrender -lfontconfig -lfreetype

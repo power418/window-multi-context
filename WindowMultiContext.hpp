@@ -69,6 +69,9 @@ public:
                 for (auto& e : m_entries)
                 {
                     if (!e.active || cfg.window != e.xid) continue;
+                    
+                    e.gl->resize(cfg.width, cfg.height);
+                    
                     std::string msg = "[resize] gl window " + std::to_string(e.xid)
                                     + " rect=" + std::to_string(cfg.x) + ","
                                     + std::to_string(cfg.y) + " "
@@ -133,11 +136,13 @@ public:
         for (auto& c : m_consoles)
             if (c.active) c.con->readPty();
 
+        // If any window was closed by the user, we exit the entire application loop.
         for (auto& e : m_entries)
-            if (e.active) return true;
+            if (!e.active) return false;
         for (auto& c : m_consoles)
-            if (c.active) return true;
-        return false;
+            if (!c.active) return false;
+            
+        return true;
     }
 
     void render(int index)

@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <pty.h>
 #include <signal.h>
+#include <sys/ioctl.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -23,14 +24,15 @@
 #include <X11/keysym.h>
 
 #include "Fonts.hpp"
+#include "Terminal.hpp"
 
 class WindowConsole
 {
 public:
-    WindowConsole() = default;
+    WindowConsole() : m_terminal(80, 24) {}
 
     WindowConsole(const std::string& title, int w, int h,
-                  const std::string& shell = "/bin/bash")
+                  const std::string& shell = "/bin/bash") : m_terminal(80, 24)
     {
         create(title, w, h, shell);
     }
@@ -55,14 +57,14 @@ public:
                                          DefaultVisual(m_display, m_screen), AllocNone);
         XSetWindowAttributes swa = {};
         swa.colormap = cmap;
-        swa.background_pixel = 0x000000;
+        swa.background_pixmap = None;
         swa.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask |
                          ButtonPressMask | StructureNotifyMask;
 
         m_window = XCreateWindow(m_display, RootWindow(m_display, m_screen),
                                   0, 0, w, h, 0, DefaultDepth(m_display, m_screen),
                                   InputOutput, DefaultVisual(m_display, m_screen),
-                                  CWColormap | CWBackPixel | CWEventMask, &swa);
+                                  CWColormap | CWBackPixmap | CWEventMask, &swa);
 
         if (!m_window)
         {
@@ -80,15 +82,15 @@ public:
         m_font_w = 8;
         m_font_h = m_font->getHeight() + 2;
 
-        m_cols = (m_width - 8) / m_font_w;
-        m_rows = (m_height - 8) / m_font_h;
-        if (m_cols < 10) m_cols = 10;
-        if (m_rows < 3) m_rows = 3;
-
-        if (!openPty(shell))
+        updateSize();
+        
+        if (!shell.empty())
         {
-            close();
-            return false;
+            if (!m_terminal.spawn(shell))
+            {
+                close();
+                return false;
+            }
         }
 
         m_open = true;
@@ -98,21 +100,7 @@ public:
     void close()
     {
         m_open = false;
-
-        if (m_child_pid > 0)
-        {
-            kill(m_child_pid, SIGTERM);
-            usleep(50000);
-            kill(m_child_pid, SIGKILL);
-            waitpid(m_child_pid, nullptr, WNOHANG);
-            m_child_pid = 0;
-        }
-
-        if (m_master_fd >= 0)
-        {
-            ::close(m_master_fd);
-            m_master_fd = -1;
-        }
+        m_terminal.close();
 
         if (m_font)
         {
@@ -150,44 +138,13 @@ public:
 
     void readPty()
     {
-        if (m_master_fd < 0) return;
-
-        char buf[4096];
-        int n = ::read(m_master_fd, buf, sizeof(buf) - 1);
-        if (n > 0)
-        {
-            buf[n] = '\0';
-            std::cout.write(buf, n);
-            std::cout.flush();
-            for (int i = 0; i < n; i++)
-            {
-                char c = buf[i];
-                if (c == '\n')
-                {
-                    m_lines.push_back(m_current_line);
-                    m_current_line.clear();
-                    if ((int)m_lines.size() > m_max_lines)
-                        m_lines.pop_front();
-                }
-                else if (c == '\r')
-                {
-                    // ignore
-                }
-                else
-                {
-                    m_current_line += c;
-                }
-            }
-        }
-        else if (n == 0)
-        {
-            m_open = false;
-        }
+        m_terminal.update();
     }
 
     void selectLoop(int fps = 60)
     {
-        if (!m_display || m_master_fd < 0) return;
+        int pty_fd = m_terminal.getPTY().getMasterFD();
+        if (!m_display) return;
 
         int x11_fd = ConnectionNumber(m_display);
         useconds_t frame_us = 1000000 / fps;
@@ -199,8 +156,12 @@ public:
             fd_set fds;
             FD_ZERO(&fds);
             FD_SET(x11_fd, &fds);
-            FD_SET(m_master_fd, &fds);
-            int max_fd = (x11_fd > m_master_fd ? x11_fd : m_master_fd) + 1;
+            int max_fd = x11_fd + 1;
+
+            if (pty_fd >= 0) {
+                FD_SET(pty_fd, &fds);
+                if (pty_fd >= max_fd) max_fd = pty_fd + 1;
+            }
 
             struct timeval tv;
             tv.tv_sec = 0;
@@ -215,7 +176,7 @@ public:
                     handleXEvent(ev);
                 }
 
-            if (FD_ISSET(m_master_fd, &fds))
+            if (pty_fd >= 0 && FD_ISSET(pty_fd, &fds))
                 readPty();
 
             render();
@@ -242,68 +203,116 @@ public:
         while (XCheckTypedEvent(m_display, Expose, &ev))
             XNextEvent(m_display, &ev);
 
-        GC gc = XCreateGC(m_display, m_window, 0, nullptr);
+        Pixmap pixmap = XCreatePixmap(m_display, m_window, m_width, m_height, DefaultDepth(m_display, m_screen));
+        GC gc = XCreateGC(m_display, pixmap, 0, nullptr);
 
         XSetForeground(m_display, gc, 0x000000);
-        XFillRectangle(m_display, m_window, gc, 0, 0, m_width, m_height);
+        XFillRectangle(m_display, pixmap, gc, 0, 0, m_width, m_height);
 
+        Grid& grid = m_terminal.getState().getGrid();
+        
 #if defined(DEBUG)
-        std::string dbg = "DEBUG: cols=" + std::to_string(m_cols)
-                        + " rows=" + std::to_string(m_rows)
-                        + " lines=" + std::to_string(m_lines.size())
+        std::string dbg = "DEBUG: cols=" + std::to_string(grid.getCols())
+                        + " rows=" + std::to_string(grid.getRows())
                         + " fps=~" + std::to_string(m_fps_counter);
         XSetForeground(m_display, gc, 0x111111);
-        XFillRectangle(m_display, m_window, gc, 0, 0, m_width, m_font_h + 4);
-        m_font->drawString(m_window, "#555555", 6, 4 + m_font->getAscent(), dbg);
+        XFillRectangle(m_display, pixmap, gc, 0, 0, m_width, m_font_h + 4);
+        m_font->drawString(pixmap, "#555555", 6, 4 + m_font->getAscent(), dbg);
         int start_y = 4 + m_font_h + 2;
 #else
         int start_y = 0;
 #endif
 
-        int y = 6 + m_font->getAscent() + start_y;
-        int line_count = (int)m_lines.size();
-        int avail_rows = m_rows - (start_y > 0 ? 1 : 0);
-
-        // show completed lines, then the current line (shell prompt / echo)
-        int start = line_count > avail_rows - 1 ? line_count - (avail_rows - 1) : 0;
-        for (int i = start; i < line_count; i++)
+        // Draw the grid
+        for (int row = 0; row < grid.getRows(); ++row)
         {
-            m_font->drawString(m_window, "lime green", 6, y, m_lines[i]);
-            y += m_font_h;
+            int col = 0;
+            while (col < grid.getCols()) {
+                const Cell& first_cell = grid.getCell(col, row);
+                uint32_t fg = first_cell.fg_color;
+                uint32_t bg = first_cell.bg_color;
+                
+                std::string chunk;
+                int start_col = col;
+
+                // Group characters by same foreground & background color
+                while (col < grid.getCols() && 
+                       grid.getCell(col, row).fg_color == fg && 
+                       grid.getCell(col, row).bg_color == bg) 
+                {
+                    char32_t c = grid.getCell(col, row).character;
+                    if (c == 0) c = ' ';
+                    
+                    // Convert char32_t (UTF-32) back to UTF-8 string for Xft rendering
+                    if (c < 0x80) {
+                        chunk += (char)c;
+                    } else if (c < 0x800) {
+                        chunk += (char)(0xC0 | (c >> 6));
+                        chunk += (char)(0x80 | (c & 0x3F));
+                    } else if (c < 0x10000) {
+                        chunk += (char)(0xE0 | (c >> 12));
+                        chunk += (char)(0x80 | ((c >> 6) & 0x3F));
+                        chunk += (char)(0x80 | (c & 0x3F));
+                    } else if (c <= 0x10FFFF) {
+                        chunk += (char)(0xF0 | (c >> 18));
+                        chunk += (char)(0x80 | ((c >> 12) & 0x3F));
+                        chunk += (char)(0x80 | ((c >> 6) & 0x3F));
+                        chunk += (char)(0x80 | (c & 0x3F));
+                    } else {
+                        chunk += '?';
+                    }
+                    col++;
+                }
+                
+                int px_x = 6 + (start_col * m_font_w);
+                int px_y = 6 + start_y + (row * m_font_h);
+                
+                // Draw background quad if it's not the default terminal background (0x000000)
+                if (bg != 0x000000) {
+                    XSetForeground(m_display, gc, bg);
+                    XFillRectangle(m_display, pixmap, gc, px_x, px_y, (col - start_col) * m_font_w, m_font_h);
+                }
+                
+                // Draw text chunk
+                bool is_empty_spaces = (chunk.find_first_not_of(' ') == std::string::npos);
+                if (!is_empty_spaces || bg != 0x000000) {
+                    char hex[16];
+                    snprintf(hex, sizeof(hex), "#%06X", fg);
+                    m_font->drawString(pixmap, hex, px_x, px_y + m_font->getAscent(), chunk);
+                }
+            }
         }
 
-        // show current line (shell prompt + typed chars, echoed by PTY)
-        if (!m_current_line.empty())
-        {
-            m_font->drawString(m_window, "lime green", 6, y, m_current_line);
-        }
-
-        // blinking cursor at end of current line (or input line if no echo yet)
-        auto& last = m_current_line.empty() ? m_input_line : m_current_line;
+        // Draw cursor
+        int cx = m_terminal.getState().getCursorX();
+        int cy = m_terminal.getState().getCursorY();
         bool blink_on = (std::time(nullptr) % 1 == 0) ? true : false;
+        
         if (m_cursor_visible && blink_on)
         {
-            int cx = 6 + m_font->getTextWidth(last);
-            XSetForeground(m_display, gc, 0x00ff00);
-            XFillRectangle(m_display, m_window, gc, cx, y - m_font->getAscent() + m_font->getDescent() + 1,
-                            m_font_h / 2, 2);
+            int cursor_px_x = 6 + (cx * m_font_w);
+            int cursor_px_y = 6 + start_y + (cy * m_font_h);
+            
+            XSetFunction(m_display, gc, GXxor);
+            XSetForeground(m_display, gc, 0xE5E5E5); // White XOR
+            XFillRectangle(m_display, pixmap, gc, cursor_px_x, cursor_px_y, m_font_w, m_font_h);
+            XSetFunction(m_display, gc, GXcopy); // Restore normal drawing
         }
 
+        XCopyArea(m_display, pixmap, m_window, gc, 0, 0, m_width, m_height, 0, 0);
         XFreeGC(m_display, gc);
+        XFreePixmap(m_display, pixmap);
         XFlush(m_display);
     }
 
     void writeOutput(const std::string& text)
     {
-        m_lines.push_back(text);
-        if ((int)m_lines.size() > m_max_lines)
-            m_lines.pop_front();
+        m_terminal.writeOutput(text);
     }
 
     void sendInput(const std::string& text)
     {
-        if (m_master_fd >= 0 && !text.empty())
-            ::write(m_master_fd, text.c_str(), text.size());
+        m_terminal.sendInput(text);
     }
 
     bool isOpen() const { return m_open; }
@@ -331,26 +340,42 @@ public:
 
             switch (ks)
             {
+            case XK_Up:
+                sendInput("\x1b[A");
+                break;
+            case XK_Down:
+                sendInput("\x1b[B");
+                break;
+            case XK_Right:
+                sendInput("\x1b[C");
+                break;
+            case XK_Left:
+                sendInput("\x1b[D");
+                break;
+            case XK_Home:
+                sendInput("\x1b[H");
+                break;
+            case XK_End:
+                sendInput("\x1b[F");
+                break;
+            case XK_Page_Up:
+                sendInput("\x1b[5~");
+                break;
+            case XK_Page_Down:
+                sendInput("\x1b[6~");
+                break;
             case XK_Return:
                 buf[0] = '\n'; len = 1;
-                m_input_line.clear();
                 break;
             case XK_BackSpace:
-                if (!m_input_line.empty())
-                {
-                    m_input_line.pop_back();
-                    buf[0] = 0x7f; len = 1; // DEL to PTY
-                }
+                buf[0] = 0x7f; len = 1; // DEL to PTY
                 break;
             case XK_Escape:
-                m_input_line.clear();
                 buf[0] = '\x1b'; len = 1;
                 break;
             default:
                 len = XLookupString(const_cast<XKeyEvent*>(&ev.xkey),
                                     buf, sizeof(buf) - 1, &ks, nullptr);
-                if (len > 0 && buf[0] >= 32 && buf[0] <= 126)
-                    m_input_line += buf[0];
                 break;
             }
 
@@ -360,9 +385,23 @@ public:
             break;
         }
 
+        case ConfigureNotify:
+            if (ev.xconfigure.width != m_width || ev.xconfigure.height != m_height)
+            {
+                m_width = ev.xconfigure.width;
+                m_height = ev.xconfigure.height;
+                updateSize();
+                m_terminal.resize(m_cols, m_rows, m_width, m_height);
+            }
+            break;
+
         case ClientMessage:
             if ((Atom)ev.xclient.data.l[0] == m_wmDelete)
                 m_open = false;
+            break;
+
+        case Expose:
+            // nothing
             break;
 
         default:
@@ -372,23 +411,17 @@ public:
     }
 
 private:
-    bool openPty(const std::string& shell)
+    void updateSize()
     {
-        m_child_pid = forkpty(&m_master_fd, nullptr, nullptr, nullptr);
-        if (m_child_pid < 0)
-            return false;
-
-        if (m_child_pid == 0)
-        {
-            const char* sh = shell.c_str();
-            const char* argv[] = {sh, "-i", nullptr};
-            const char* env[] = {"TERM=xterm-256color", "PATH=/usr/bin:/bin", nullptr};
-            execve(sh, (char* const*)argv, (char* const*)env);
-            _exit(1);
-        }
-
-        fcntl(m_master_fd, F_SETFL, O_NONBLOCK);
-        return true;
+#if defined(DEBUG)
+        int header_h = 4 + m_font_h + 2;
+#else
+        int header_h = 0;
+#endif
+        m_cols = (m_width - 8) / m_font_w;
+        m_rows = (m_height - 8 - header_h) / m_font_h;
+        if (m_cols < 10) m_cols = 10;
+        if (m_rows < 3) m_rows = 3;
     }
 
     Display* m_display = nullptr;
@@ -404,15 +437,10 @@ private:
     std::string m_title;
     bool m_open = false;
 
+    Terminal m_terminal;
+
     AntialiasedFont* m_font = nullptr;
 
-    int m_master_fd = -1;
-    pid_t m_child_pid = 0;
-
-    std::deque<std::string> m_lines;
-    std::string m_current_line;
-    std::string m_input_line;
-    int m_max_lines = 1000;
     bool m_cursor_visible = true;
     int m_fps_counter = 0;
 };

@@ -145,7 +145,7 @@ public:
      * @param font_name Font name string in Fontconfig format (e.g. "DejaVu Sans-10:bold", "sans-11").
      */
     AntialiasedFont(Display* display, int screen_num, const std::string& font_name)
-        : m_display(display), m_screen_num(screen_num), m_font(nullptr)
+        : m_display(display), m_font(nullptr)
     {
         m_visual = DefaultVisual(display, screen_num);
         m_colormap = DefaultColormap(display, screen_num);
@@ -230,7 +230,6 @@ private:
     }
 
     Display* m_display;
-    int m_screen_num;
     Visual* m_visual;
     Colormap m_colormap;
     XftFont* m_font;
