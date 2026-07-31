@@ -62,6 +62,17 @@ void Grid::resize(int cols, int rows, int& cursor_x, int& cursor_y) {
             current_logical_len = 0;
         }
     }
+
+    // Strip trailing empty logical lines after the cursor
+    // This prevents empty space at the bottom of the screen from forcing text into history
+    while (logical_lines.size() > (size_t)(c_logic_line + 1)) {
+        if (logical_lines.back().empty()) {
+            logical_lines.pop_back();
+        } else {
+            break;
+        }
+    }
+
     if (!current_line.empty()) {
         logical_lines.push_back(current_line);
         if (c_logic_line == -1 && cursor_y >= m_rows) {

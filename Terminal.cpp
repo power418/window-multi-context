@@ -42,6 +42,17 @@ void Terminal::sendInput(const std::string& data) {
 
 void Terminal::writeOutput(const std::string& data) {
     if (!data.empty()) {
+        // Prevent double rendering of identical consecutive requests from client
+        // Only deduplicate if the string has actual content (length > 2) to avoid eating multiple newlines
+        if (data.length() > 2 && data == m_last_written_data) {
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_write_time).count() < 100) {
+                return; // Ignore exact same message sent within 100ms
+            }
+        }
+        m_last_written_data = data;
+        m_last_write_time = std::chrono::steady_clock::now();
+
         if (!m_shell_ready && m_pty.getChildPID() > 0) {
             m_queued_logs.push_back(data);
         } else {

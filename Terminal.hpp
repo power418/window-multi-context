@@ -7,6 +7,7 @@
 
 #include <string>
 #include <deque>
+#include <chrono>
 
 class Terminal {
 public:
@@ -51,6 +52,9 @@ private:
     
     bool m_shell_ready = false;
     std::deque<std::string> m_queued_logs;
+
+    std::string m_last_written_data;
+    std::chrono::time_point<std::chrono::steady_clock> m_last_write_time;
 };
 
 #endif // __TERMINAL_HPP__

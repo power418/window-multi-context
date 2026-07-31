@@ -89,7 +89,8 @@ public:
       return false;
 
     // Process events for all GL windows
-    for (auto &e : m_entries) {
+    for (size_t i = 0; i < m_entries.size(); ++i) {
+      auto &e = m_entries[i];
       if (!e.active)
         continue;
       Display *display = (Display *)e.win->nativeDisplay();
@@ -105,7 +106,7 @@ public:
           if (cfg.window == e.xid) {
             e.gl->resize(cfg.width, cfg.height);
 #if defined(DEBUG)
-            std::cout << "[resize] gl window " << e.xid << " rect=" 
+            std::cout << "[resize] gl window id=" << i << " (xid=" << e.xid << ") rect=" 
                       << cfg.x << "," << cfg.y << " " 
                       << cfg.width << "x" << cfg.height << "\n";
 #endif
@@ -114,7 +115,7 @@ public:
 
         if (!e.win->handleXEvent(ev)) {
 #if defined(DEBUG)
-          std::cout << "[event] gl window closed (xid=" << e.xid << ")\n";
+          std::cout << "[event] gl window id=" << i << " closed (xid=" << e.xid << ")\n";
 #endif
           e.active = false;
         }
