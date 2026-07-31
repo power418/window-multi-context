@@ -1,6 +1,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <unistd.h>
+#include <cstdlib>
 
 #include "Player.hpp"
 #include "Weapon.hpp"
@@ -93,15 +95,49 @@ static void runLoop(WindowMultiContext& ctx, const std::vector<int>& indices)
 
 int main(int argc, char **argv)
 {
-    // old PlayerCharacter loop
-    // for (int i = 1; i + 2 < argc; i += 3)
-    // {
-    //     PlayerCharacter player(argv[i], std::atof(argv[i + 1]), std::atoi(argv[i + 2]));
-    //     player.ds_info();
-    //     std::cout << "---\n";
-    // }
+    auto configs = parseArgs(argc, argv);
+    if (configs.empty())
+    {
+        std::cerr << "no window configurations.\n";
+        return 1;
+    }
+
+    WindowMultiContext ctx;
 
 #if defined(DEBUG)
+    int con_idx = ctx.addConsole("Console - Debug", 600, 400, "", "JetBrainsMono NF", 11.0f);
+#endif
+
+    // Redirect standard output and standard error to the built-in consoles
+    ConsoleRedirector cout_redir(ctx, std::cout);
+    ConsoleRedirector cerr_redir(ctx, std::cerr);
+
+    char hostname[256] = "unknown";
+    gethostname(hostname, sizeof(hostname));
+    const char* username = getlogin();
+    if (!username) username = getenv("USER");
+    // Get the exact bash prompt directly from the user's bash config
+    std::string prompt;
+    FILE* pipe = popen("bash -i -c 'echo -n \"${PS1@P}\"' 2>/dev/null", "r");
+    if (pipe) {
+        char buffer[128];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            prompt += buffer;
+        }
+        pclose(pipe);
+    }
+
+    if (prompt.empty()) {
+        prompt = "$ "; // Fallback if bash fails
+    }
+
+    std::cout << prompt;
+    for (int i = 0; i < argc; i++) std::cout << argv[i] << (i < argc - 1 ? " " : "");
+    std::cout << "\n";
+
+#if defined(DEBUG)
+    if (con_idx >= 0)
+        std::cout << "created: debug console (600x400)\n";
     std::cout << "=== scanning shaders ===\n";
 #endif
 
@@ -137,21 +173,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    auto configs = parseArgs(argc, argv);
-    if (configs.empty())
-    {
-        std::cerr << "no window configurations.\n";
-        return 1;
-    }
-
-    WindowMultiContext ctx;
     auto indices = createWindows(ctx, configs, vert_src, frag_src);
-
-#if defined(DEBUG)
-    int con_idx = ctx.addConsole("Console - Debug", 600, 400);
-    if (con_idx >= 0)
-        std::cout << "created: debug console (600x400)\n";
-#endif
 
     bool all_failed = true;
     for (int idx : indices)

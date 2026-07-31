@@ -33,9 +33,11 @@ public:
     WindowConsole() : m_terminal(80, 24) {}
 
     WindowConsole(const std::string& title, int w, int h,
-                  const std::string& shell = "/bin/bash") : m_terminal(80, 24)
+                  const std::string& shell = "/bin/bash",
+                  const std::string& font_family = "monospace",
+                  float font_size = 11.0f) : m_terminal(80, 24)
     {
-        create(title, w, h, shell);
+        create(title, w, h, shell, font_family, font_size);
     }
 
     ~WindowConsole()
@@ -43,7 +45,10 @@ public:
         close();
     }
 
-    bool create(const std::string& title, int w, int h, const std::string& shell = "/bin/bash")
+    bool create(const std::string& title, int w, int h, 
+                const std::string& shell = "/bin/bash",
+                const std::string& font_family = "monospace", 
+                float font_size = 11.0f)
     {
         m_display = XOpenDisplay(nullptr);
         if (!m_display)
@@ -79,7 +84,9 @@ public:
         XSetWMProtocols(m_display, m_window, &m_wmDelete, 1);
         XMapWindow(m_display, m_window);
 
-        m_font = new AntialiasedFont(m_display, m_screen, "monospace-11");
+        char font_name_buf[256];
+        snprintf(font_name_buf, sizeof(font_name_buf), "%s:size=%.1f", font_family.c_str(), font_size);
+        m_font = new AntialiasedFont(m_display, m_screen, font_name_buf);
         m_font_w = 8;
         m_font_h = m_font->getHeight() + 2;
 
@@ -92,6 +99,10 @@ public:
                 close();
                 return false;
             }
+        }
+        else
+        {
+            m_cursor_visible = false;
         }
 
         m_open = true;
@@ -207,6 +218,12 @@ public:
 
     void render()
     {
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_render_time).count() < 16) {
+            return; // Cap at ~60 FPS
+        }
+        m_last_render_time = now;
+
         if (!m_display || !m_window || !m_open)
             return;
 
@@ -345,6 +362,8 @@ public:
 
         case KeyPress:
         {
+            if (!m_cursor_visible) return true;
+
             // Reset scroll offset on user typing
             m_terminal.getState().getGrid().setScrollOffset(0);
             
@@ -493,6 +512,7 @@ private:
 
     bool m_cursor_visible = true;
     int m_fps_counter = 0;
+    std::chrono::time_point<std::chrono::steady_clock> m_last_render_time;
 };
 
 #endif // __WINDOW_CONSOLE_HPP__

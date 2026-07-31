@@ -8,9 +8,36 @@
 
 #include <X11/Xlib.h>
 
+#include <streambuf>
+
 #include "GLContext.hpp"
 #include "Window.hpp"
 #include "WindowConsole.hpp"
+
+class WindowMultiContext;
+
+class ConsoleRedirector {
+public:
+  ConsoleRedirector(WindowMultiContext& ctx, std::ostream& stream);
+  ~ConsoleRedirector();
+
+private:
+  class ConsoleBuf : public std::streambuf {
+  public:
+      ConsoleBuf(std::streambuf* original, WindowMultiContext& ctx);
+  protected:
+      virtual int_type overflow(int_type c) override;
+      virtual std::streamsize xsputn(const char* s, std::streamsize n) override;
+  private:
+      std::streambuf* m_original;
+      WindowMultiContext& m_ctx;
+  };
+
+  std::ostream& m_stream;
+  WindowMultiContext& m_ctx;
+  std::streambuf* m_original;
+  ConsoleBuf* m_buf;
+};
 
 class WindowMultiContext {
 public:
@@ -39,12 +66,22 @@ public:
   }
 
   int addConsole(const std::string &title, int w, int h,
-                 const std::string &shell = "/bin/bash") {
-    auto con = std::make_unique<WindowConsole>(title, w, h, shell);
+                 const std::string &shell = "/bin/bash",
+                 const std::string &font_family = "monospace",
+                 float font_size = 11.0f) {
+    auto con = std::make_unique<WindowConsole>(title, w, h, shell, font_family, font_size);
     if (!con->isOpen())
       return -1;
     m_consoles.push_back({std::move(con), true});
     return (int)m_consoles.size() - 1;
+  }
+
+  void writeToConsoles(const std::string& msg) {
+    for (auto &c : m_consoles) {
+      if (c.active) {
+        c.con->writeOutput(msg);
+      }
+    }
   }
 
   bool pollEvents() {
@@ -68,12 +105,9 @@ public:
           if (cfg.window == e.xid) {
             e.gl->resize(cfg.width, cfg.height);
 #if defined(DEBUG)
-            std::string msg = "[resize] gl window " + std::to_string(e.xid) +
-                              " rect=" + std::to_string(cfg.x) + "," +
-                              std::to_string(cfg.y) + " " +
-                              std::to_string(cfg.width) + "x" +
-                              std::to_string(cfg.height);
-            std::cout << msg << "\n";
+            std::cout << "[resize] gl window " << e.xid << " rect=" 
+                      << cfg.x << "," << cfg.y << " " 
+                      << cfg.width << "x" << cfg.height << "\n";
 #endif
           }
         }
@@ -98,23 +132,6 @@ public:
       while (XPending(display)) {
         XEvent ev;
         XNextEvent(display, &ev);
-
-        if (ev.type == ConfigureNotify) {
-          auto &cfg = ev.xconfigure;
-          if (cfg.window == (::Window)(uintptr_t)c.con->getWindow()) {
-#if defined(DEBUG)
-            std::string msg =
-                "[resize] console " + std::to_string((uintptr_t)cfg.window) +
-                " rect=" + std::to_string(cfg.x) + "," + std::to_string(cfg.y) +
-                " " + std::to_string(cfg.width) + "x" +
-                std::to_string(cfg.height);
-            std::cout << msg << "\n";
-            for (auto &c2 : m_consoles)
-              if (c2.active)
-                c2.con->writeOutput(msg + "\r\n");
-#endif
-          }
-        }
 
         if (!c.con->handleXEvent(ev)) {
           c.active = false;
@@ -198,5 +215,44 @@ private:
   };
   std::vector<ConsoleEntry> m_consoles;
 };
+
+inline ConsoleRedirector::ConsoleBuf::ConsoleBuf(std::streambuf* original, WindowMultiContext& ctx)
+    : m_original(original), m_ctx(ctx) {}
+
+inline std::streambuf::int_type ConsoleRedirector::ConsoleBuf::overflow(int_type c) {
+    if (c != traits_type::eof()) {
+        char ch = traits_type::to_char_type(c);
+        std::string s(1, ch);
+        if (ch == '\n') s = "\r\n";
+        m_ctx.writeToConsoles(s);
+        if (m_original) m_original->sputc(c);
+    }
+    return c;
+}
+
+inline std::streamsize ConsoleRedirector::ConsoleBuf::xsputn(const char* s, std::streamsize n) {
+    std::string str(s, n);
+    size_t pos = 0;
+    while ((pos = str.find('\n', pos)) != std::string::npos) {
+        str.replace(pos, 1, "\r\n");
+        pos += 2;
+    }
+    m_ctx.writeToConsoles(str);
+    if (m_original) return m_original->sputn(s, n);
+    return n;
+}
+
+inline ConsoleRedirector::ConsoleRedirector(WindowMultiContext& ctx, std::ostream& stream) 
+    : m_stream(stream), m_ctx(ctx) 
+{
+    m_original = stream.rdbuf();
+    m_buf = new ConsoleBuf(m_original, m_ctx);
+    stream.rdbuf(m_buf);
+}
+
+inline ConsoleRedirector::~ConsoleRedirector() {
+    m_stream.rdbuf(m_original);
+    delete m_buf;
+}
 
 #endif // __WINDOW_MULTI_CONTEXT_HPP__
