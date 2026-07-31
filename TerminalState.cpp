@@ -99,7 +99,7 @@ void TerminalState::eraseInLine(int mode) {
 }
 
 void TerminalState::resize(int cols, int rows) {
-    m_grid.resize(cols, rows);
+    m_grid.resize(cols, rows, m_cursor_x, m_cursor_y);
     if (m_cursor_x >= cols) m_cursor_x = cols - 1;
     if (m_cursor_y >= rows) m_cursor_y = rows - 1;
 }

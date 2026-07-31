@@ -101,10 +101,14 @@ int main(int argc, char **argv)
     //     std::cout << "---\n";
     // }
 
+#if defined(DEBUG)
     std::cout << "=== scanning shaders ===\n";
+#endif
 
     Filesystem fs(".glsl");
+#if defined(DEBUG)
     fs.ds_info();
+#endif
 
     if (fs.count() < 2)
     {
@@ -121,8 +125,10 @@ int main(int argc, char **argv)
             vert_src = buf.toString();
         else if (path.find("frag") != std::string::npos)
             frag_src = buf.toString();
+#if defined(DEBUG)
         buf.ds_info();
         std::cout << "--- content ---\n" << buf.toString() << "\n";
+#endif
     }
 
     if (vert_src.empty() || frag_src.empty())

@@ -72,7 +72,8 @@ void PTY::resize(const TerminalSize& size) {
         ws.ws_row = size.rows;
         ws.ws_xpixel = size.width_px;
         ws.ws_ypixel = size.height_px;
-        ioctl(m_master_fd, TIOCSWINSZ, &ws);
+        // Commented out to prevent bash from receiving SIGWINCH and redrawing the prompt repeatedly
+        // ioctl(m_master_fd, TIOCSWINSZ, &ws);
     }
 }
 

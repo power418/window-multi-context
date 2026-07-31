@@ -29,7 +29,6 @@ void Terminal::update() {
                 // Print all queued logs now that bash is ready
                 for (const auto& log : m_queued_logs) {
                     m_parser.parse(log.c_str(), log.size());
-                    m_parser.parse("\r\n", 2);
                 }
                 m_queued_logs.clear();
             }
@@ -47,21 +46,24 @@ void Terminal::writeOutput(const std::string& data) {
             m_queued_logs.push_back(data);
         } else {
             m_parser.parse(data.c_str(), data.size());
-            m_parser.parse("\r\n", 2);
         }
     }
 }
 
 void Terminal::resize(int cols, int rows, int width_px, int height_px) {
+    bool cols_rows_changed = (m_cols != cols || m_rows != rows);
+
     m_cols = cols;
     m_rows = rows;
     m_width_px = width_px;
     m_height_px = height_px;
 
-    // Update internal state grid
-    m_state.resize(cols, rows);
+    if (cols_rows_changed) {
+        // Update internal state grid
+        m_state.resize(cols, rows);
 
-    // Notify PTY
-    TerminalSize size{cols, rows, width_px, height_px};
-    m_pty.resize(size);
+        // Notify PTY only if grid size changed to prevent infinite prompt redraws
+        TerminalSize size{cols, rows, width_px, height_px};
+        m_pty.resize(size);
+    }
 }
