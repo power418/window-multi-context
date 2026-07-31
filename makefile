@@ -5,16 +5,29 @@ EXEC := main.out
 LIBS := -lX11 -lGL -lXft -lXrender -lfontconfig -lfreetype
 XFT_CFLAGS := $(shell pkg-config --cflags xft 2>/dev/null)
 
+CXXFLAGS := -std=c++17 -Wall
 MODE ?= release
+BUILD_DIR := build/$(MODE)
+OBJ := $(SRC:%.cpp=$(BUILD_DIR)/%.o)
+DEPS := $(OBJ:.o=.d)
 
 ifeq ($(MODE),debug)
-    FLAGS := -std=c++17 -g -DDEBUG -O0 -Wall -Wextra
+    CXXFLAGS += -g -O0 -DDEBUG -Wextra -Wpedantic
 else
-    FLAGS := -std=c++17 -DNDEBUG -O2 -Wall
+    CXXFLAGS += -DNDEBUG -O3 -flto
+    LDFLAGS := -flto
 endif
 
-all:
-	$(CC) $(SRC) $(FLAGS) $(XFT_CFLAGS) $(LIBS) -o $(EXEC)
+all: $(EXEC)
+
+$(EXEC): $(OBJ)
+	$(CC) $(OBJ) $(LDFLAGS) $(LIBS) -o $@
+
+$(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
+	$(CC) $(CXXFLAGS) $(XFT_CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
 debug:
 	$(MAKE) MODE=debug
@@ -22,9 +35,21 @@ debug:
 release:
 	$(MAKE) MODE=release
 
-run:
+run: $(EXEC)
 	./$(EXEC)
 
-.PHONY: clean debug release run
+run-debug:
+	$(MAKE) MODE=debug run
+
+run-release:
+	$(MAKE) MODE=release run
+
 clean:
+	rm -rf build
+
+clean-all: clean
 	rm -f $(EXEC)
+
+-include $(DEPS)
+
+.PHONY: all debug release run run-debug run-release clean clean-all

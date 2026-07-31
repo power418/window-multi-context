@@ -5,7 +5,25 @@ Header-only C++ project exploring OOP, inheritance, polymorphism, filesystem uti
 ## Build
 
 ```sh
-make
+make                      # release (default)
+make debug                # debug build
+make release              # release build
+make run                  # run current mode build
+make run-debug            # build + run debug
+make run-release          # build + run release
+make clean                # remove build artifacts
+```
+
+Build modes:
+
+| Mode | Flags | Keunggulan |
+|---|---|---|
+| Debug | `-g -O0 -DDEBUG -Wextra -Wpedantic` | Full symbols buat gdb/lldb, tanpa optimisasi (mudah di-step), kode debug aktif, warning lebih ketat |
+| Release | `-O3 -DNDEBUG -flto` | Optimisasi maksimal + link-time optimization (FPS lebih tinggi), buang kode debug, binari jauh lebih kecil |
+
+Objek file tiap mode dipisah (`build/debug/`, `build/release/`), jadi ganti mode tanpa rebuild ulang. Header dependency otomatis (`.d` files), edit `.hpp` → auto rebuild file terkait.
+
+```sh
 ./main.out [count]         # N windows, 800x600 each
 ./main.out [w] [h]         # 1 window with custom size
 ./main.out [count] [w1 h1 w2 h2 ...]  # N windows, each with own size
