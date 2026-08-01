@@ -61,14 +61,12 @@ static std::vector<WindowConfig> parseArgs(int argc, char **argv)
 }
 
 static std::vector<int> createWindows(WindowMultiContext& ctx,
-                                       const std::vector<WindowConfig>& configs,
-                                       const std::string& vert_src,
-                                       const std::string& frag_src)
+                                       const std::vector<WindowConfig>& configs)
 {
     std::vector<int> indices;
     for (const auto& cfg : configs)
     {
-        int idx = ctx.addWindow(cfg.title, cfg.width, cfg.height, vert_src, frag_src);
+        int idx = ctx.addWindow(cfg.title, cfg.width, cfg.height);
         indices.push_back(idx);
         if (idx >= 0)
             std::cout << "created: " << cfg.title
@@ -138,42 +136,10 @@ int main(int argc, char **argv)
 #if defined(DEBUG)
     if (con_idx >= 0)
         std::cout << "created: debug console (600x400)\n";
-    std::cout << "=== scanning shaders ===\n";
 #endif
 
-    Filesystem fs(".glsl");
-#if defined(DEBUG)
-    fs.ds_info();
-#endif
-
-    if (fs.count() < 2)
-    {
-        std::cout << "need at least 2 shader files (vertex + fragment).\n";
-        return 0;
-    }
-
-    std::string vert_src, frag_src;
-    for (std::size_t i = 0; i < fs.count(); i++)
-    {
-        auto buf = fs.load(i);
-        auto path = buf.path();
-        if (path.find("vert") != std::string::npos)
-            vert_src = buf.toString();
-        else if (path.find("frag") != std::string::npos)
-            frag_src = buf.toString();
-#if defined(DEBUG)
-        buf.ds_info();
-        std::cout << "--- content ---\n" << buf.toString() << "\n";
-#endif
-    }
-
-    if (vert_src.empty() || frag_src.empty())
-    {
-        std::cerr << "could not find vertex or fragment shader.\n";
-        return 1;
-    }
-
-    auto indices = createWindows(ctx, configs, vert_src, frag_src);
+    // No shaders needed, we use fixed-function pipeline for texture rendering
+    auto indices = createWindows(ctx, configs);
 
     bool all_failed = true;
     for (int idx : indices)

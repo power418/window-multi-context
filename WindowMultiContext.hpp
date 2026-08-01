@@ -51,13 +51,12 @@ public:
       }
   }
 
-  int addWindow(const std::string &title, int w, int h,
-                const std::string &vert_src, const std::string &frag_src) {
+  int addWindow(const std::string &title, int w, int h) {
     auto win = std::make_unique<WindowBuffer>(title, w, h);
     if (!win->isOpen())
       return -1;
     auto gl = std::make_unique<GLContext>();
-    if (!gl->create(*win, title, w, h, vert_src, frag_src))
+    if (!gl->create(*win, title, w, h))
       return -1;
     m_entries.push_back(
         {std::move(win), std::move(gl), (::Window)(uintptr_t)0, true});

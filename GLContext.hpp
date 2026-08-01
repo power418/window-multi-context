@@ -14,6 +14,7 @@
 
 #include "Window.hpp"
 #include "FileBuffer.hpp"
+#include "Texture.hpp"
 
 class GLContext
 {
@@ -21,10 +22,9 @@ public:
     GLContext() = default;
 
     GLContext(WindowBuffer& win, const std::string& title,
-              int w, int h,
-              const std::string& vert_src, const std::string& frag_src)
+              int w, int h)
     {
-        create(win, title, w, h, vert_src, frag_src);
+        create(win, title, w, h);
     }
 
     ~GLContext()
@@ -33,8 +33,7 @@ public:
     }
 
     bool create(WindowBuffer& win, const std::string& title,
-                int w, int h,
-                const std::string& vert_src, const std::string& frag_src)
+                int w, int h)
     {
         m_display = (Display*)win.nativeDisplay();
         if (!m_display)
@@ -75,23 +74,7 @@ public:
             return false;
         }
 
-        typedef GLXContext (*glXCreateContextAttribsARBProc)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
-        auto glXCreateContextAttribsARB = (glXCreateContextAttribsARBProc)
-            glXGetProcAddress((const GLubyte*)"glXCreateContextAttribsARB");
-
-        if (glXCreateContextAttribsARB)
-        {
-            int ctx_attribs[] = {
-                GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
-                GLX_CONTEXT_MINOR_VERSION_ARB, 3,
-                GLX_CONTEXT_PROFILE_MASK_ARB,  GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
-                None
-            };
-            m_context = glXCreateContextAttribsARB(m_display, fbconfig[0], nullptr, True, ctx_attribs);
-        }
-
-        if (!m_context)
-            m_context = glXCreateNewContext(m_display, fbconfig[0], GLX_RGBA_TYPE, nullptr, True);
+        m_context = glXCreateNewContext(m_display, fbconfig[0], GLX_RGBA_TYPE, nullptr, True);
 
         XFree(vi);
         XFree(fbconfig);
@@ -105,38 +88,46 @@ public:
         m_window = (Window)win.nativeWindow();
         glXMakeCurrent(m_display, m_window, m_context);
 
-        if (!setupShaders(vert_src, frag_src))
-        {
-            std::cerr << "shader compilation failed\n";
-            return false;
-        }
-
-        setupGeometry();
+        // === SECTION: Texture Setup (stb_image + GL) ===
+        m_texture.loadFromFile("res/prabowo_dajjal.png");
         return true;
     }
 
     void destroy()
     {
-        if (m_program) glDeleteProgram(m_program);
-        if (m_vao) glDeleteVertexArrays(1, &m_vao);
-        if (m_vbo) glDeleteBuffers(1, &m_vbo);
+        // === SECTION: Cleanup GL Resources ===
+        m_texture.destroy();
         if (m_context && m_display)
         {
             glXMakeCurrent(m_display, None, nullptr);
             glXDestroyContext(m_display, m_context);
         }
         m_context = nullptr;
-        m_vao = m_vbo = m_program = 0;
     }
 
     void render() const
     {
+        // === SECTION: Frame Render Loop ===
         glXMakeCurrent(m_display, m_window, m_context);
-        glClearColor(0.08f, 0.08f, 0.12f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glUseProgram(m_program);
-        glBindVertexArray(m_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, m_texture.id());
+        
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        glBegin(GL_QUADS);
+        // texcoords           // position
+        glTexCoord2f(0.0f, 0.0f); glVertex2f(-0.6f, -0.8f);
+        glTexCoord2f(1.0f, 0.0f); glVertex2f( 0.6f, -0.8f);
+        glTexCoord2f(1.0f, 1.0f); glVertex2f( 0.6f,  0.8f);
+        glTexCoord2f(0.0f, 1.0f); glVertex2f(-0.6f,  0.8f);
+        glEnd();
+        
+        glDisable(GL_BLEND);
+        
         glXSwapBuffers(m_display, m_window);
     }
 
@@ -148,87 +139,10 @@ public:
         }
     }
 
-    GLuint program() const { return m_program; }
-
-private:
-    bool setupShaders(const std::string& vert_src, const std::string& frag_src)
-    {
-        auto compile = [](GLuint type, const std::string& src) -> GLuint
-        {
-            GLuint shader = glCreateShader(type);
-            const char* csrc = src.c_str();
-            glShaderSource(shader, 1, &csrc, nullptr);
-            glCompileShader(shader);
-
-            GLint ok = 0;
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-            if (!ok)
-            {
-                char log[512];
-                glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-                std::cerr << "shader compile error:\n" << log << "\n";
-                glDeleteShader(shader);
-                return 0;
-            }
-            return shader;
-        };
-
-        GLuint vs = compile(GL_VERTEX_SHADER, vert_src);
-        GLuint fs = compile(GL_FRAGMENT_SHADER, frag_src);
-        if (!vs || !fs)
-        {
-            glDeleteShader(vs); glDeleteShader(fs);
-            return false;
-        }
-
-        m_program = glCreateProgram();
-        glAttachShader(m_program, vs);
-        glAttachShader(m_program, fs);
-        glLinkProgram(m_program);
-
-        GLint ok = 0;
-        glGetProgramiv(m_program, GL_LINK_STATUS, &ok);
-        if (!ok)
-        {
-            char log[512];
-            glGetProgramInfoLog(m_program, sizeof(log), nullptr, log);
-            std::cerr << "program link error:\n" << log << "\n";
-            glDeleteProgram(m_program);
-            glDeleteShader(vs); glDeleteShader(fs);
-            m_program = 0;
-            return false;
-        }
-
-        glDetachShader(m_program, vs);
-        glDetachShader(m_program, fs);
-        glDeleteShader(vs); glDeleteShader(fs);
-        return true;
-    }
-
-    void setupGeometry()
-    {
-        float verts[] = {
-            -0.8f, -0.8f, 0.0f,
-             0.8f, -0.8f, 0.0f,
-             0.0f,  0.8f, 0.0f
-        };
-
-        glGenVertexArrays(1, &m_vao);
-        glGenBuffers(1, &m_vbo);
-        glBindVertexArray(m_vao);
-        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
-    }
-
     Display* m_display = nullptr;
     Window m_window = 0;
     GLXContext m_context = nullptr;
-    GLuint m_program = 0;
-    GLuint m_vao = 0;
-    GLuint m_vbo = 0;
+    Texture m_texture;
 };
 
 #endif // __GL_CONTEXT_HPP__
