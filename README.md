@@ -1,4 +1,4 @@
-# C++ For Game Developer
+# Window Multi Context
 
 Header-only C++ project exploring OOP, inheritance, polymorphism, filesystem utilities, and OpenGL rendering with GLX/X11.
 
